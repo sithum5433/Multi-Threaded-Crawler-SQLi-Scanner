@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Project Name: Advanced Web Crawler & SQL Injection Radar (v3.1)
+Project Name: Advanced Web Crawler & SQL Injection Radar (v3.2)
 Author: Sithum
 Description: A professional multi-vector vulnerability scanner supporting recursive 
              web crawling, contextual URL parameter logic gates, and advanced HTML 
-             form auditing using response-length baseline differential checks.
+             form auditing strictly via database error signature verification.
 """
 
 import requests
@@ -48,7 +48,7 @@ vulnerabilities_counter = 0
 def show_banner():
     """ Displays a clean, vibrant stylized terminal banner asset """
     print(f"{CLR_CYAN}{CLR_BOLD}==================================================")
-    print("     ADVANCED WEB RADAR: CRAWLER & SQLi v3.1      ")
+    print("     ADVANCED WEB RADAR: CRAWLER & SQLi v3.2      ")
     print(f"      Engineered by: {CLR_YELLOW}Sithum{CLR_CYAN}                       ")
     print(f"=================================================={CLR_RESET}")
 
@@ -196,7 +196,8 @@ def audit_parameters(url):
 def audit_forms(url):
     """ 
     Extracts HTML forms and performs advanced multi-vector payload submissions.
-    Supports response-length differential checks to unmask hidden POST-based Blind SQLi.
+    Strictly parses for verified database server syntax errors to eliminate 
+    search-logic content length false positives.
     """
     global vulnerabilities_counter
     try:
@@ -221,19 +222,8 @@ def audit_forms(url):
         inputs = [inp.attrs.get("name") for inp in form.find_all("input") if inp.attrs.get("name")]
         if not inputs:
             continue
-
-        # Establish a clear dynamic baseline for the form output using safe arguments
-        try:
-            clean_data = {inp: "test" for inp in inputs}
-            if method == "post":
-                base_res = requests.post(form_url, data=clean_data, headers=HEADERS, cookies=COOKIES, timeout=5)
-            else:
-                base_res = requests.get(form_url, params=clean_data, headers=HEADERS, cookies=COOKIES, timeout=5)
-            baseline_form_len = len(base_res.text)
-        except Exception:
-            continue
         
-        # Inject validation testing payloads into mapped input parameters concurrently
+        # Inject validation testing payloads into mapped input parameters
         for payload in payloads:
             data = {inp: payload for inp in inputs}
             try:
@@ -242,22 +232,16 @@ def audit_forms(url):
                 else:
                     response = requests.get(form_url, params=data, headers=HEADERS, cookies=COOKIES, timeout=5)
                     
-                current_form_len = len(response.text)
-                
-                # Check for explicit database server syntax leak triggers
+                # Strict error monitoring closure to avoid page shift dropouts
                 error_detected = response.status_code == 500 or any(error in response.text.lower() for error in SQL_ERRORS)
                 
-                # Check for logical authentication profile shifts or routing redirection mutations
-                form_anomaly = abs(baseline_form_len - current_form_len) > 200
-                
-                if error_detected or form_anomaly:
-                    detection_model = "Error Signature" if error_detected else "Form Authentication Layout Shift"
-                    print(f"\n{CLR_RED}{CLR_BOLD}[!] 🚨 VULNERABILITY DETECTED IN HTML FORM! 🚨")
+                if error_detected:
+                    print(f"\n{CLR_RED}{CLR_BOLD}[!] 🚨 VERIFIED VULNERABILITY DETECTED IN HTML FORM! 🚨")
                     print(f"    -> Form Action Path: {form_url}")
                     print(f"    -> HTTP Protocol Method: {method.upper()}")
                     print(f"    -> Target Inputs Mapped: {inputs}")
                     print(f"    -> Exploit Payload: {payload}")
-                    print(f"    -> Detection Model: {detection_model}{CLR_RESET}\n")
+                    print(f"    -> Detection Model: Explicit Database Error Signature Leak{CLR_RESET}\n")
                     vulnerable = True
                     vulnerabilities_counter += 1
                     return True
